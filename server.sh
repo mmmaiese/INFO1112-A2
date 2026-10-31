@@ -3,6 +3,7 @@
 PORT=1234
 WORK=/tmp/server_work
 ASSIGNMENT_URL="https://www.sydney.edu.au/units/INFO1112/2026-S2C-ND-CC"
+POPULATION_URL="https://dbr.abs.gov.au/processedData/csv/STE_1.csv"
 
 mkdir -p $WORK
 
@@ -14,6 +15,7 @@ show_error() {
     echo "ERROR: $1"
     echo "ERROR: $1" >&2
 }
+
 
 # Downloads assignment details, extracts the required information and returns it as JSON.
 handle_assignment() {
@@ -44,6 +46,64 @@ handle_assignment() {
     cat assignment.json
 }
 
+
+# Download NSW population data, extract yearly figures and generate a population graph.
+handle_population() {
+    curl -s -f -L -m 30 -o $WORK/STE_1.csv "$POPULATION_URL"
+    if [ $? -ne 0 ]; then
+        show_error "could not download the population csv"
+        return
+    fi
+
+    # line 1 of the csv holds the years, the line starting ERP_P_20 holds the populations.
+    # Columns 4 onwards are the years: take each column, and keep it if it has a population.
+    header=$(head -1 $WORK/STE_1.csv | sed 's/\r//')
+    row=$(grep '^ERP_P_20' $WORK/STE_1.csv | sed 's/\r//')
+    commas=$(echo "$header" | grep -o ',' | wc -l)
+    last=$((commas + 1))                        # number of columns
+
+    rm -f $WORK/population.csv
+    col=4
+    while [ $col -le $last ]; do
+        year=$(echo "$header" | cut -d, -f$col)
+        pop=$(echo "$row" | cut -d, -f$col)
+        if [ -n "$pop" ]; then
+            echo "$year,$pop" >> $WORK/population.csv
+        fi
+        col=$((col + 1))
+    done
+    if [ ! -s $WORK/population.csv ]; then
+        show_error "no population data found in the csv"
+        return
+    fi
+    latest=$(grep '^2025,' "$WORK/population.csv" | sed 's/,/ /')
+    echo "Latest NSW population: $latest" >&2
+
+    # I acknowledge that I used Claude AI to write python code for the plotting.
+    # the plot (AI python code)
+    cat > $WORK/plot.py << 'PYEOF'
+import sys
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+years, pops = [], []
+for line in open(sys.argv[1]):
+    y, p = line.strip().split(",")
+    years.append(int(y)); pops.append(int(p))
+plt.plot(years, pops, marker="o")
+plt.xlabel("Year"); plt.ylabel("Population")
+plt.xticks(years); plt.ticklabel_format(axis="y", style="plain")
+plt.savefig(sys.argv[2])
+PYEOF
+    python3 $WORK/plot.py $WORK/population.csv population.png 2>/dev/null
+    if [ $? -ne 0 ]; then
+        show_error "could not draw the plot"
+        return
+    fi
+    cat population.png
+}
+
+
 # handle one client: the request is in $REQUEST, the reply is printed
 handle_request() {
     grep Connection $LOG >&2          # "Connection received on <client ip> <port>"
@@ -52,8 +112,9 @@ handle_request() {
     arg=$(echo "$line" | cut -s -d' ' -f2-)
 
     case $cmd in
-        assignment) handle_assignment ;;      # (the brief's example has three s)
-        *)          show_error "unknown request '$cmd'" ;;
+        assignment) handle_assignment ;;
+        population) handle_population ;;
+        *) show_error "unknown request '$cmd'" ;;
     esac
 }
 
