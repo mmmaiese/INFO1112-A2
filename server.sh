@@ -4,6 +4,7 @@ PORT=1234
 WORK=/tmp/server_work
 ASSIGNMENT_URL="https://www.sydney.edu.au/units/INFO1112/2026-S2C-ND-CC"
 POPULATION_URL="https://dbr.abs.gov.au/processedData/csv/STE_1.csv"
+POI_URL="https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_POI/MapServer/0/query"
 
 mkdir -p $WORK
 
@@ -104,6 +105,69 @@ PYEOF
 }
 
 
+# Extract nearby POI names, check the JSON is valid and send it to the client.
+handle_poi() {
+    distance=$(echo "$1" | grep -oE 'distance=[0-9]+' | cut -d= -f2)
+    if [ -z "$distance" ]; then
+        distance=1000
+    fi
+    place=$(echo "$1" | sed 's/distance=[0-9]*//; s/^ *//; s/ *$//')
+    if [ -z "$place" ]; then
+        show_error "usage: poi <name or lat,lon> distance=<metres>"
+        return
+    fi
+
+    # Get the latitude and longitude of the POI
+    if echo "$place" | grep -qE '^-?[0-9.]+,-?[0-9.]+$'; then
+        latitude=$(echo "$place" | cut -d, -f1)
+        longitude=$(echo "$place" | cut -d, -f2)
+    else
+        name=$(echo "$place" | tr 'a-z' 'A-Z')
+        response=$(curl -s -f -G -m 20 "$POI_URL" \
+                         --data-urlencode "where=poiname like '%$name%'" \
+                         --data-urlencode "returnGeometry=true" \
+                         --data-urlencode "outSR=4326" \
+                         --data-urlencode "resultRecordCount=1" \
+                         --data-urlencode "f=json")
+        if [ $? -ne 0 ]; then
+            show_error "could not connect to the NSW POI service"
+            return
+        fi
+        longitude=$(echo "$response" | jq -r '.features[0].geometry.x // empty' 2>/dev/null)
+        latitiude=$(echo "$response" | jq -r '.features[0].geometry.y // empty' 2>/dev/null)
+    fi
+    if [ -z "$latitude" ] || [ -z "$longitude" ]; then
+        show_error "'$place' was not found by the NSW POI service"
+        return
+    fi
+
+    # Get every POI within the distance of that point
+    response=$(curl -s -f -G -m 20 "$POI_URL" \
+                     --data-urlencode "geometry=$longitude,$latitude" \
+                     --data-urlencode "geometryType=esriGeometryPoint" \
+                     --data-urlencode "inSR=4326" \
+                     --data-urlencode "distance=$distance" \
+                     --data-urlencode "units=esriSRUnit_Meter" \
+                     --data-urlencode "where=1=1" \
+                     --data-urlencode "outFields=poiname" \
+                     --data-urlencode "returnGeometry=false" \
+                     --data-urlencode "f=json")
+    if [ $? -ne 0 ]; then
+        show_error "could not connect to the NSW POI service"
+        return
+    fi
+
+    # Keep only the POI names, as a json array (poi.json), and send it
+    echo "$response" | jq '[.features[]?.attributes.poiname]' > poi.json 2>/dev/null
+    if [ ! -s poi.json ]; then
+        show_error "the NSW POI service gave an invalid response"
+        return
+    fi
+    cat poi.json
+}
+
+
+
 # handle one client: the request is in $REQUEST, the reply is printed
 handle_request() {
     grep Connection $LOG >&2          # "Connection received on <client ip> <port>"
@@ -114,6 +178,7 @@ handle_request() {
     case $cmd in
         assignment) handle_assignment ;;
         population) handle_population ;;
+        poi) handle_poi "$arg" ;;
         *) show_error "unknown request '$cmd'" ;;
     esac
 }
