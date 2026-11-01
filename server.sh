@@ -134,7 +134,7 @@ handle_poi() {
             return
         fi
         longitude=$(echo "$response" | jq -r '.features[0].geometry.x // empty' 2>/dev/null)
-        latitiude=$(echo "$response" | jq -r '.features[0].geometry.y // empty' 2>/dev/null)
+        latitude=$(echo "$response" | jq -r '.features[0].geometry.y // empty' 2>/dev/null)
     fi
     if [ -z "$latitude" ] || [ -z "$longitude" ]; then
         show_error "'$place' was not found by the NSW POI service"
