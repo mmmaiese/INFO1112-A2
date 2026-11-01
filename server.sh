@@ -127,7 +127,6 @@ handle_poi() {
                          --data-urlencode "where=poiname like '%$name%'" \
                          --data-urlencode "returnGeometry=true" \
                          --data-urlencode "outSR=4326" \
-                         --data-urlencode "resultRecordCount=1" \
                          --data-urlencode "f=json")
         if [ $? -ne 0 ]; then
             show_error "could not connect to the NSW POI service"
