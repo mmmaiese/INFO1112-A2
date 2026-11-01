@@ -167,6 +167,20 @@ handle_poi() {
 }
 
 
+# When busy reject anyone who connects while a request is running
+start_busy() {
+    touch $WORK/busy
+    while [ -f $WORK/busy ]; do
+        echo "ERROR: server is busy with another request; request rejected" | nc -4 -n -N -l $IP $PORT > /dev/null 2>&1
+    done > /dev/null 2>&1 &
+    sleep 0.1
+}
+
+stop_busy() {
+    rm -f $WORK/busy
+    pkill -f "nc -4 -n -N -l $IP"  
+}
+
 
 # handle one client: the request is in $REQUEST, the reply is printed
 handle_request() {
@@ -175,12 +189,15 @@ handle_request() {
     cmd=$(echo "$line" | cut -d' ' -f1)
     arg=$(echo "$line" | cut -s -d' ' -f2-)
 
+    start_busy
     case $cmd in
         assignment) handle_assignment ;;
         population) handle_population ;;
         poi) handle_poi "$arg" ;;
+        slow) sleep 10; echo "slow request finished" ;;
         *) show_error "unknown request '$cmd'" ;;
     esac
+    stop_busy
 }
 
 # Main: runs forever
